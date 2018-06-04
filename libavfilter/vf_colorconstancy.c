@@ -239,7 +239,7 @@ static int filter_grey_constancy(AVFilterContext *ctx, AVFrame *in, AVFrame *out
         td.in = out;
     }
 
-    td.result = av_malloc_array(3, nb_jobs * sizeof(*td.result));
+    /*td.result = av_malloc_array(3, nb_jobs * sizeof(*td.result));
     if (!td.result) 
         return AVERROR(ENOMEM);
     for (plane=0; plane<3; ++plane) {
@@ -263,7 +263,7 @@ static int filter_grey_constancy(AVFilterContext *ctx, AVFrame *in, AVFrame *out
                 s->white[plane] = FFMAX(s->white[plane] , td.result[plane*nb_jobs + job]);
     }
 
-    av_freep(&td.result);
+    av_freep(&td.result);*/
     return 0;
 }
 
@@ -295,7 +295,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
     if ((ret=illumination_estimation(ctx, in, out)))
         return ret;
 
-    chromatic_adaptation(ctx, in, out);
+    //chromatic_adaptation(ctx, in, out);
 
     return ff_filter_frame(outlink, out);
 }
