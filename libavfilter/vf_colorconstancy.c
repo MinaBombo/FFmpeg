@@ -96,6 +96,7 @@ static int diagonal_transformation(AVFilterContext *ctx, void *arg, int jobnr, i
     ColorConstancyContext *s = ctx->priv;
     ThreadData *td = arg;
     AVFrame *in = td->in;
+    AVFrame *out = td->out;
     int plane;
 
     for (plane = 0; plane < 3; ++plane) {
@@ -104,13 +105,14 @@ static int diagonal_transformation(AVFilterContext *ctx, void *arg, int jobnr, i
         const int64_t numpixels = width * (int64_t)height;
         const int slice_start = (numpixels * jobnr) / nb_jobs;
         const int slice_end = (numpixels * (jobnr+1)) / nb_jobs;
-        uint8_t *data = in->data[plane];
+        const uint8_t *src = in->data[plane];
+        uint8_t *dst = out->data[plane];
         double temp;
         unsigned i;
 
         for (i = slice_start; i < slice_end; ++i) {
-            temp = (double)data[i] / s->white[plane];
-            data[i] = av_clip_uint8((int)(temp+0.5));
+            temp = (double)src[i] / s->white[plane];
+            dst[i] = av_clip_uint8((int)(temp+0.5));
         }
     }
     return 0;
@@ -122,7 +124,8 @@ static void chromatic_adaptation(AVFilterContext *ctx, AVFrame *in, AVFrame *out
     ThreadData td;
     int nb_jobs = FFMIN3(s->planeheight[1], s->planewidth[1], s->nb_threads);
 
-    td.in = out;
+    td.in = in;
+    td.out = out;
     ctx->internal->execute(ctx, diagonal_transformation, &td, NULL, nb_jobs);
 }
 
@@ -131,16 +134,16 @@ static void normalize_light(AVFilterContext *ctx)
     ColorConstancyContext *s = ctx->priv;
     double *light = s->white;
     double abs_val = pow( pow(light[0], 2.0)+pow(light[1], 2.0)+pow(light[2], 2.0), 0.5);
-    unsigned p;
+    unsigned plane;
 
     if(!abs_val) {
-        for (p=0; p<3; ++p)
-            light[p] = 1.0;
+        for (plane = 0; plane < 3; ++plane)
+            light[plane] = 1.0;
     } else {
-        for (p=0; p<3; ++p) {
-            light[p] = (light[p] / abs_val) * pow(3.0, 0.5);
-            if (!light[p])
-                light[p] = 1.0;
+        for (plane = 0; plane < 3; ++plane) {
+            light[plane] = (light[plane] / abs_val) * pow(3.0, 0.5);
+            if (!light[plane])
+                light[plane] = 1.0;
         }
     }
 }
@@ -233,13 +236,12 @@ static int filter_grey_constancy(AVFilterContext *ctx, AVFrame *in, AVFrame *out
 
     td.in = in;
     if (s->difford == 2) {
-        // Use out as a temp for first order of sobel
         td.out = out;
         ctx->internal->execute(ctx, sobel , &td, NULL, nb_jobs);
         td.in = out;
     }
 
-    /*td.result = av_malloc_array(3, nb_jobs * sizeof(*td.result));
+    td.result = av_malloc_array(3, nb_jobs * sizeof(*td.result));
     if (!td.result) 
         return AVERROR(ENOMEM);
     for (plane=0; plane<3; ++plane) {
@@ -263,7 +265,7 @@ static int filter_grey_constancy(AVFilterContext *ctx, AVFrame *in, AVFrame *out
                 s->white[plane] = FFMAX(s->white[plane] , td.result[plane*nb_jobs + job]);
     }
 
-    av_freep(&td.result);*/
+    av_freep(&td.result);
     return 0;
 }
 
