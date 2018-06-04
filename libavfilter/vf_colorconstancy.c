@@ -51,8 +51,8 @@ typedef struct ColorConstancyContext {
 #define OFFSET(x) offsetof(ColorConstancyContext, x)
 #define FLAGS AV_OPT_FLAG_FILTERING_PARAM|AV_OPT_FLAG_VIDEO_PARAM
 static const AVOption colorconstancy_options[] = {
-    { "difford",  "set differentiation order", OFFSET(difford),  AV_OPT_TYPE_INT, {.dbl=1}, 0, 2,     FLAGS },
-    { "minknorm", "set Minkowski norm",        OFFSET(minknorm), AV_OPT_TYPE_INT, {.dbl=1}, 0, 65535, FLAGS },
+    { "difford",  "set differentiation order", OFFSET(difford),  AV_OPT_TYPE_INT, {.dbl=1}, 0, 2, FLAGS },
+    { "minknorm", "set Minkowski norm",        OFFSET(minknorm), AV_OPT_TYPE_INT, {.dbl=1}, 0, 9, FLAGS },
     { NULL }
 };
 
@@ -61,7 +61,7 @@ AVFILTER_DEFINE_CLASS(colorconstancy);
 static int query_formats(AVFilterContext *ctx)
 {
     static const enum AVPixelFormat pix_fmts[] = {
-        AV_PIX_FMT_GBRAP,
+        AV_PIX_FMT_GBRP,
         AV_PIX_FMT_NONE
     };
 
@@ -87,7 +87,8 @@ static int config_props(AVFilterLink *inlink)
 typedef struct ThreadData {
     AVFrame *in;
     AVFrame *out;
-    int32_t *result;
+    double *result;
+    double minknorm;
 } ThreadData;
 
 static int diagonal_transformation(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
@@ -122,8 +123,6 @@ static void chromatic_adaptation(AVFilterContext *ctx, AVFrame *in, AVFrame *out
     int nb_jobs = FFMIN3(s->planeheight[1], s->planewidth[1], s->nb_threads);
 
     td.in = out;
-    td.result = NULL;
-    td.out = NULL;
     ctx->internal->execute(ctx, diagonal_transformation, &td, NULL, nb_jobs);
 }
 
@@ -146,19 +145,16 @@ static void normalize_light(AVFilterContext *ctx)
     }
 }
 
-#define CLAMP(x, mx) ((x) < 0 ? 0 : ((x) >= (mx) ? (mx - 1) : (mx)))
-#define INDEX(i, dr, dc, w, h) CLAMP((i/w) + dr, w) * w + CLAMP(i%w + dc, h) 
-#define DIFFX(s, i, w, h) s[INDEX(i, -1, -1, w, h)] * -1 + s[INDEX(i, 0, -1, w, h)] * -2 + s[INDEX(i, 1,  -1, w, h)] * -1 + \
-                          s[INDEX(i, -1,  1, w, h)] * -1 + s[INDEX(i, 0,  1, w, h)] * -2 + s[INDEX(i, 1,   1, w, h)] * -1 
-
-#define DIFFY(s, i, w, h) s[INDEX(i, -1, -1, w, h)] * -1 + s[INDEX(i, -1, 0, w, h)] * -2 + s[INDEX(i, -1, 1, w, h)] * -1 + \
+#define CLAMP(x, mx) ((x) < 0 ? 0 : ((x) >= (mx) ? (mx - 1) : (x)))
+#define INDEX(i, dr, dc, w, h) CLAMP((i/w) + dr, h) * w + CLAMP(i%w + dc, w) 
+#define DIFFX(s, i, w, h) s[INDEX(i, -1, -1, w, h)] *  1 + s[INDEX(i, 0, -1, w, h)] *  2 + s[INDEX(i, 1, -1, w, h)] *  1 + \
+                          s[INDEX(i, -1,  1, w, h)] * -1 + s[INDEX(i, 0,  1, w, h)] * -2 + s[INDEX(i, 1,  1, w, h)] * -1 
+#define DIFFY(s, i, w, h) s[INDEX(i, -1, -1, w, h)] *  1 + s[INDEX(i, -1, 0, w, h)] *  2 + s[INDEX(i, -1, 1, w, h)] *  1 + \
                           s[INDEX(i,  1, -1, w, h)] * -1 + s[INDEX(i,  1, 0, w, h)] * -2 + s[INDEX(i,  1, 1, w, h)] * -1 
-
 #define DIFF(d, s, i, w, h) \
     int dx = DIFFX(s, i, w, h); \
     int dy = DIFFY(s, i, w, h); \
     d = av_clip_uint8(sqrt(dx*dx + dy*dy));
-
 static int sobel(AVFilterContext* ctx, void* arg, int jobnr, int nb_jobs)
 {
     ColorConstancyContext *s = ctx->priv;
@@ -189,7 +185,8 @@ static int grey_constancy_preprocessing(AVFilterContext* ctx, void* arg, int job
     ColorConstancyContext *s = ctx->priv;
     ThreadData *td = arg;
     AVFrame *in = td->in;
-    int32_t *result = td->result;
+    double *result = td->result;
+    double minknorm = td->minknorm;
     int plane;
 
     for (plane = 0; plane < 3; ++plane) {
@@ -210,7 +207,7 @@ static int grey_constancy_preprocessing(AVFilterContext* ctx, void* arg, int job
                     d = data[i];
 
             if (s->minknorm > 0 )
-                result[result_index] += d;
+                result[result_index] += (pow((double)d, minknorm));
             else 
                 result[result_index] = FFMAX(result[result_index], d);
         }
@@ -251,6 +248,7 @@ static int filter_grey_constancy(AVFilterContext *ctx, AVFrame *in, AVFrame *out
             td.result[plane*nb_jobs + job] = 0;
         }
     }
+    td.minknorm = s->minknorm;
     ctx->internal->execute(ctx, grey_constancy_preprocessing , &td, NULL, nb_jobs);
 
     if(s->minknorm > 0) {
