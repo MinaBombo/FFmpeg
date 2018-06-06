@@ -64,7 +64,7 @@ typedef struct ColorConstancyContext {
 static const AVOption colorconstancy_options[] = {
     { "difford",  "set differentiation order", OFFSET(difford),  AV_OPT_TYPE_INT,   {.dbl=1},   0,   2,      FLAGS },
     { "minknorm", "set Minkowski norm",        OFFSET(minknorm), AV_OPT_TYPE_INT,   {.dbl=1},   0,   65535,  FLAGS },
-    { "sigma",    "set sigma",                 OFFSET(sigma),    AV_OPT_TYPE_FLOAT, {.dbl=0.5}, 0.0, 1024.0, FLAGS },
+    { "sigma",    "set sigma",                 OFFSET(sigma),    AV_OPT_TYPE_FLOAT, {.dbl=1},   0.0, 1024.0, FLAGS },
     { NULL }
 };
 
