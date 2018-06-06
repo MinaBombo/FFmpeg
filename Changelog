@@ -13,7 +13,7 @@ version <next>:
 - Reimplemented SRCNN filter using DNN inference interface
 - adeclick filter
 - adeclip filter
-- colorconstancy filter (low-level image statistics)
+- colorconstancy filter
 
 
 version 4.0:
