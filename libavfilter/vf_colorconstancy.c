@@ -188,10 +188,10 @@ static int filter_slice_grey_edge(AVFilterContext* ctx, void* arg, int jobnr, in
 
         if (s->minknorm > 0)
             for (i = slice_start; i < slice_end; ++i)
-                dst[i] += (pow(src[i]/255., minknorm));
+                dst[jobnr] += (pow(src[i]/255., minknorm));
         else
             for (i = slice_start; i < slice_end; ++i)
-                dst[i] = FFMAX(dst[i], src[i]);
+                dst[jobnr] = FFMAX(dst[i], src[i]);
     }
     return 0;
 }
@@ -251,7 +251,7 @@ static int slice_get_derivative(AVFilterContext* ctx, void* arg, int jobnr, int 
         const int lx = (dir == DIR_X ? width  : height); 
         const int slice_start = (ly *  jobnr   ) / nb_jobs;
         const int slice_end   = (ly * (jobnr+1)) / nb_jobs;
-        double *ch = td->data[dst_index][plane];
+        double *dst = td->data[dst_index][plane];
         const void *src;
         int y, x, z, linesize;
         int *r = (dir == DIR_X ? &y : &x), *c = (dir == DIR_X ? &x : &y);
@@ -262,7 +262,7 @@ static int slice_get_derivative(AVFilterContext* ctx, void* arg, int jobnr, int 
             for (y = slice_start; y < slice_end; ++y) 
                 for (x = 0; x < lx; ++x) 
                     for (z = -filtersize; z <= filtersize; ++z)
-                        ch[(*r)*width+(*c)] += (((uint8_t*)src)[ CLAMP((*r)+z*dir, height) * linesize + CLAMP((*c)+z*(1-dir), width)] * 
+                        dst[(*r)*width+(*c)] += (((uint8_t*)src)[ CLAMP((*r)+z*dir, height) * linesize + CLAMP((*c)+z*(1-dir), width)] * 
                                                 gauss[FINDX(filtersize, z)]);
         } else {
             src = td->data[src_index][plane]; 
@@ -270,7 +270,7 @@ static int slice_get_derivative(AVFilterContext* ctx, void* arg, int jobnr, int 
             for (y = slice_start; y < slice_end; ++y)
                 for (x = 0; x < lx; ++x)
                     for (z = -filtersize; z <= filtersize; ++z)
-                        ch[(*r)*width+(*c)] += (((double*)src)[ CLAMP((*r)+z*dir, height) * linesize + CLAMP((*c)+z*(1-dir), width)] *
+                        dst[(*r)*width+(*c)] += (((double*)src)[ CLAMP((*r)+z*dir, height) * linesize + CLAMP((*c)+z*(1-dir), width)] *
                                                 gauss[FINDX(filtersize, z)]);
         }
         
@@ -285,7 +285,7 @@ static int slice_normalize(AVFilterContext* ctx, void* arg, int jobnr, int nb_jo
     const int difford = s->difford;
     int plane;
 
-    for (plane = 0; plane < 3; ++plane) {
+    for (plane = 0; plane < NUM_PLANES; ++plane) {
         const int height = s->planeheight[plane];
         const int width  = s->planewidth[plane];
         const int64_t numpixels = width * (int64_t)height;
