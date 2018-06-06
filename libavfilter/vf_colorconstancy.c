@@ -23,8 +23,8 @@
  * Color constancy filter
  *
  * @see http://colorconstancy.com/
- * 
- * @algorithm: grey_edge 
+ *
+ * @algorithm: grey_edge
  * Based on "Edge-Based Color Constancy"
  * by J. van de Weijer, T. Gevers, A. Gijsenij
  */
@@ -46,7 +46,7 @@ typedef struct ColorConstancyContext {
     const AVClass *class;
 
     int difford;
-    int minknorm;
+    int minknorm; // @minknorm = 0 => getMax instead
     float sigma;
 
     int filtersize;
@@ -89,13 +89,13 @@ static int set_gauss(AVFilterContext *ctx)
     double sum1, sum2;
     int i;
 
-    for (i = 0; i <= MAX_DIFF_ORD; ++i)  
+    for (i = 0; i <= MAX_DIFF_ORD; ++i)
         s->gauss[i] = NULL;
 
     for (i = 0; i <= MAX_DIFF_ORD; ++i) {
         s->gauss[i] = av_malloc_array(2*filtersize+1, sizeof(*s->gauss[i]));
         if(!s->gauss[i]) {
-            for (i = 0; i <= MAX_DIFF_ORD; ++i) 
+            for (i = 0; i <= MAX_DIFF_ORD; ++i)
                 av_freep(&s->gauss[i]);
             return AVERROR(ENOMEM);
         }
@@ -110,7 +110,7 @@ static int set_gauss(AVFilterContext *ctx)
         sum1 += s->gauss[1][FINDX(filtersize, i)] * i;
     }
 
-    for (i = 0; i <= 2*filtersize ; ++i) 
+    for (i = 0; i <= 2*filtersize ; ++i)
         s->gauss[1][i] /= sum1;
 
     sum1 = 0.0;
@@ -124,7 +124,7 @@ static int set_gauss(AVFilterContext *ctx)
         s->gauss[2][FINDX(filtersize, i)] -= sum1/(2*filtersize+1);
         sum2 += (0.5*i*i*s->gauss[2][FINDX(filtersize, i)]);
     }
-    for (i = 0; i <= 2*filtersize ; ++i) 
+    for (i = 0; i <= 2*filtersize ; ++i)
         s->gauss[2][i] /= sum2;
 
     return 0;
@@ -137,7 +137,7 @@ static int config_props(AVFilterLink *inlink)
     ColorConstancyContext *s = ctx->priv;
     const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(inlink->format);
     int ret;
-    
+
     s->filtersize = floor(BREAK_OFF_SIGMA*s->sigma+0.5);
     if(ret=set_gauss(ctx))
         return ret;
@@ -218,7 +218,7 @@ static int setup_derivative_buffers(AVFilterContext* ctx, ThreadData *td)
     for (i = 0; i <= nb_buff; ++i) {
         for (j = 0; j < NUM_PLANES; ++j) {
             td->data[i][j] = av_malloc_array(s->planeheight[1] * s->planewidth[1], sizeof(*td->data[i][j]));
-            if (!td->data[i][j]){
+            if (!td->data[i][j]) {
                 cleanup_derivative_buffers(ctx, td);
                 return AVERROR(ENOMEM);
             }
@@ -230,7 +230,7 @@ static int setup_derivative_buffers(AVFilterContext* ctx, ThreadData *td)
 
 #define DIR_X 0
 #define DIR_Y 1
-#define CLAMP(x, mx) ( (x) < 0 ? 0 : ((x)>=(mx)) ? (mx-1) : x ) 
+#define CLAMP(x, mx) ( (x) < 0 ? 0 : ((x)>=(mx)) ? (mx-1) : x )
 static int slice_get_derivative(AVFilterContext* ctx, void* arg, int jobnr, int nb_jobs)
 {
     ColorConstancyContext *s = ctx->priv;
@@ -244,11 +244,11 @@ static int slice_get_derivative(AVFilterContext* ctx, void* arg, int jobnr, int 
     const double *gauss = s->gauss[ord];
     int plane;
 
-    for(plane = 0; plane < NUM_PLANES; ++plane){
+    for(plane = 0; plane < NUM_PLANES; ++plane) {
         const int height = s->planeheight[plane];
         const int width  = s->planewidth[plane];
-        const int ly = (dir == DIR_X ? height : width); 
-        const int lx = (dir == DIR_X ? width  : height); 
+        const int ly = (dir == DIR_X ? height : width);
+        const int lx = (dir == DIR_X ? width  : height);
         const int slice_start = (ly *  jobnr   ) / nb_jobs;
         const int slice_end   = (ly * (jobnr+1)) / nb_jobs;
         double *dst = td->data[dst_index][plane];
@@ -256,24 +256,24 @@ static int slice_get_derivative(AVFilterContext* ctx, void* arg, int jobnr, int 
         int y, x, z, linesize;
         int *r = (dir == DIR_X ? &y : &x), *c = (dir == DIR_X ? &x : &y);
 
-        if (dir == DIR_X){
-            src = in->data[plane]; 
+        if (dir == DIR_X) {
+            src = in->data[plane];
             linesize = in->linesize[plane];
-            for (y = slice_start; y < slice_end; ++y) 
-                for (x = 0; x < lx; ++x) 
+            for (y = slice_start; y < slice_end; ++y)
+                for (x = 0; x < lx; ++x)
                     for (z = -filtersize; z <= filtersize; ++z)
-                        dst[(*r)*width+(*c)] += (((uint8_t*)src)[ CLAMP((*r)+z*dir, height) * linesize + CLAMP((*c)+z*(1-dir), width)] * 
-                                                gauss[FINDX(filtersize, z)]);
+                        dst[(*r)*width+(*c)] += (((uint8_t*)src)[ CLAMP((*r)+z*dir, height) * linesize + CLAMP((*c)+z*(1-dir), width)] *
+                                                 gauss[FINDX(filtersize, z)]);
         } else {
-            src = td->data[src_index][plane]; 
+            src = td->data[src_index][plane];
             linesize = width;
             for (y = slice_start; y < slice_end; ++y)
                 for (x = 0; x < lx; ++x)
                     for (z = -filtersize; z <= filtersize; ++z)
                         dst[(*r)*width+(*c)] += (((double*)src)[ CLAMP((*r)+z*dir, height) * linesize + CLAMP((*c)+z*(1-dir), width)] *
-                                                gauss[FINDX(filtersize, z)]);
+                                                 gauss[FINDX(filtersize, z)]);
         }
-        
+
     }
     return 0;
 }
@@ -313,93 +313,84 @@ static int get_normalized_derivative(AVFilterContext *ctx, AVFrame *in, ThreadDa
 {
     ColorConstancyContext *s = ctx->priv;
 
-    switch(s->difford){
-        case 0:
-            td->meta_data[INDEX_ORD] = 0; 
+    switch(s->difford) {
+    case 0:
+        td->meta_data[INDEX_ORD] = 0;
 
-            td->meta_data[INDEX_DIR] = DIR_X;
-            td->meta_data[INDEX_DST] = 0;
-            ctx->internal->execute(ctx, slice_get_derivative, td, NULL, FFMIN(s->planeheight[1], s->nb_threads));
+        td->meta_data[INDEX_DIR] = DIR_X;
+        td->meta_data[INDEX_DST] = 0;
+        ctx->internal->execute(ctx, slice_get_derivative, td, NULL, FFMIN(s->planeheight[1], s->nb_threads));
 
-            td->meta_data[INDEX_DIR] = DIR_Y;
-            td->meta_data[INDEX_SRC] = 0;
-            td->meta_data[INDEX_DST] = 1;
-            ctx->internal->execute(ctx, slice_get_derivative, td, NULL, FFMIN(s->planewidth[1], s->nb_threads));
-            return 0;
+        td->meta_data[INDEX_DIR] = DIR_Y;
+        td->meta_data[INDEX_SRC] = 0;
+        td->meta_data[INDEX_DST] = 1;
+        ctx->internal->execute(ctx, slice_get_derivative, td, NULL, FFMIN(s->planewidth[1], s->nb_threads));
+        return 0;
 
-        case 1:
-            td->meta_data[INDEX_ORD] = 1; 
-            td->meta_data[INDEX_DIR] = DIR_X;
-            td->meta_data[INDEX_DST] = INDEX_TEMP;
-            ctx->internal->execute(ctx, slice_get_derivative, td, NULL, FFMIN(s->planeheight[1], s->nb_threads));
+    case 1:
+        td->meta_data[INDEX_ORD] = 1;
+        td->meta_data[INDEX_DIR] = DIR_X;
+        td->meta_data[INDEX_DST] = INDEX_TEMP;
+        ctx->internal->execute(ctx, slice_get_derivative, td, NULL, FFMIN(s->planeheight[1], s->nb_threads));
 
-            td->meta_data[INDEX_ORD] = 0; 
-            td->meta_data[INDEX_DIR] = DIR_Y;
-            td->meta_data[INDEX_SRC] = INDEX_TEMP;
-            td->meta_data[INDEX_DST] = INDEX_DX;
-            ctx->internal->execute(ctx, slice_get_derivative, td, NULL, FFMIN(s->planewidth[1], s->nb_threads));
+        td->meta_data[INDEX_ORD] = 0;
+        td->meta_data[INDEX_DIR] = DIR_Y;
+        td->meta_data[INDEX_SRC] = INDEX_TEMP;
+        td->meta_data[INDEX_DST] = INDEX_DX;
+        ctx->internal->execute(ctx, slice_get_derivative, td, NULL, FFMIN(s->planewidth[1], s->nb_threads));
 
-            td->meta_data[INDEX_ORD] = 0; 
-            td->meta_data[INDEX_DIR] = DIR_X;
-            td->meta_data[INDEX_DST] = INDEX_TEMP;
-            ctx->internal->execute(ctx, slice_get_derivative, td, NULL, FFMIN(s->planeheight[1], s->nb_threads));
+        td->meta_data[INDEX_ORD] = 0;
+        td->meta_data[INDEX_DIR] = DIR_X;
+        td->meta_data[INDEX_DST] = INDEX_TEMP;
+        ctx->internal->execute(ctx, slice_get_derivative, td, NULL, FFMIN(s->planeheight[1], s->nb_threads));
 
-            td->meta_data[INDEX_ORD] = 1; 
-            td->meta_data[INDEX_DIR] = DIR_Y;
-            td->meta_data[INDEX_SRC] = INDEX_TEMP;
-            td->meta_data[INDEX_DST] = INDEX_DY;
-            ctx->internal->execute(ctx, slice_get_derivative, td, NULL, FFMIN(s->planewidth[1], s->nb_threads));
-            return 0;
+        td->meta_data[INDEX_ORD] = 1;
+        td->meta_data[INDEX_DIR] = DIR_Y;
+        td->meta_data[INDEX_SRC] = INDEX_TEMP;
+        td->meta_data[INDEX_DST] = INDEX_DY;
+        ctx->internal->execute(ctx, slice_get_derivative, td, NULL, FFMIN(s->planewidth[1], s->nb_threads));
+        return 0;
 
-        case 2:
-            td->meta_data[INDEX_ORD] = 2; 
-            td->meta_data[INDEX_DIR] = DIR_X;
-            td->meta_data[INDEX_DST] = INDEX_TEMP;
-            ctx->internal->execute(ctx, slice_get_derivative, td, NULL, FFMIN(s->planeheight[1], s->nb_threads));
+    case 2:
+        td->meta_data[INDEX_ORD] = 2;
+        td->meta_data[INDEX_DIR] = DIR_X;
+        td->meta_data[INDEX_DST] = INDEX_TEMP;
+        ctx->internal->execute(ctx, slice_get_derivative, td, NULL, FFMIN(s->planeheight[1], s->nb_threads));
 
-            td->meta_data[INDEX_ORD] = 0; 
-            td->meta_data[INDEX_DIR] = DIR_Y;
-            td->meta_data[INDEX_SRC] = INDEX_TEMP;
-            td->meta_data[INDEX_DST] = INDEX_DX;
-            ctx->internal->execute(ctx, slice_get_derivative, td, NULL, FFMIN(s->planewidth[1], s->nb_threads));
+        td->meta_data[INDEX_ORD] = 0;
+        td->meta_data[INDEX_DIR] = DIR_Y;
+        td->meta_data[INDEX_SRC] = INDEX_TEMP;
+        td->meta_data[INDEX_DST] = INDEX_DX;
+        ctx->internal->execute(ctx, slice_get_derivative, td, NULL, FFMIN(s->planewidth[1], s->nb_threads));
 
-            td->meta_data[INDEX_ORD] = 0; 
-            td->meta_data[INDEX_DIR] = DIR_X;
-            td->meta_data[INDEX_DST] = INDEX_TEMP;
-            ctx->internal->execute(ctx, slice_get_derivative, td, NULL, FFMIN(s->planeheight[1], s->nb_threads));
+        td->meta_data[INDEX_ORD] = 0;
+        td->meta_data[INDEX_DIR] = DIR_X;
+        td->meta_data[INDEX_DST] = INDEX_TEMP;
+        ctx->internal->execute(ctx, slice_get_derivative, td, NULL, FFMIN(s->planeheight[1], s->nb_threads));
 
-            td->meta_data[INDEX_ORD] = 2; 
-            td->meta_data[INDEX_DIR] = DIR_Y;
-            td->meta_data[INDEX_SRC] = INDEX_TEMP;
-            td->meta_data[INDEX_DST] = INDEX_DY;
-            ctx->internal->execute(ctx, slice_get_derivative, td, NULL, FFMIN(s->planewidth[1], s->nb_threads));
+        td->meta_data[INDEX_ORD] = 2;
+        td->meta_data[INDEX_DIR] = DIR_Y;
+        td->meta_data[INDEX_SRC] = INDEX_TEMP;
+        td->meta_data[INDEX_DST] = INDEX_DY;
+        ctx->internal->execute(ctx, slice_get_derivative, td, NULL, FFMIN(s->planewidth[1], s->nb_threads));
 
-            td->meta_data[INDEX_ORD] = 1; 
-            td->meta_data[INDEX_DIR] = DIR_X;
-            td->meta_data[INDEX_DST] = INDEX_TEMP;
-            ctx->internal->execute(ctx, slice_get_derivative, td, NULL, FFMIN(s->planeheight[1], s->nb_threads));
+        td->meta_data[INDEX_ORD] = 1;
+        td->meta_data[INDEX_DIR] = DIR_X;
+        td->meta_data[INDEX_DST] = INDEX_TEMP;
+        ctx->internal->execute(ctx, slice_get_derivative, td, NULL, FFMIN(s->planeheight[1], s->nb_threads));
 
-            td->meta_data[INDEX_DIR] = DIR_Y;
-            td->meta_data[INDEX_SRC] = INDEX_TEMP;
-            td->meta_data[INDEX_DST] = INDEX_DXY;
-            ctx->internal->execute(ctx, slice_get_derivative, td, NULL, FFMIN(s->planewidth[1], s->nb_threads));
-            return 0;
+        td->meta_data[INDEX_DIR] = DIR_Y;
+        td->meta_data[INDEX_SRC] = INDEX_TEMP;
+        td->meta_data[INDEX_DST] = INDEX_DXY;
+        ctx->internal->execute(ctx, slice_get_derivative, td, NULL, FFMIN(s->planewidth[1], s->nb_threads));
+        return 0;
 
-        default:
-            return AVERROR(EINVAL);
+    default:
+        return AVERROR(EINVAL);
     }
 
 }
 
-/* Operation:
-    Max-RGB             : difford=0, minknorm=0, gblur=not-applied
-    Grey-World          : difford=0, minknorm=1, gblur=not-applied
-    Shades of Grey      : difford=0, minknorm=x, gblur=not-applied
-    General Grey-World  : difford=0, minknorm=x, gblur=applied
-    Max-Edge            : difford=1, minknorm=0, gblur=applied
-    1st Order Grey-Edge : difford=1, minknorm=x, gblur=applied
-    2nd Order Grey-Edge : difford=2, minknorm=x, gblur=applied
-*/
 static int filter_grey_edge(AVFilterContext *ctx, AVFrame *in)
 {
     ColorConstancyContext *s = ctx->priv;
@@ -423,11 +414,11 @@ static int filter_grey_edge(AVFilterContext *ctx, AVFrame *in)
             s->white[plane] = pow(s->white[plane], 1.0/(double)s->minknorm);
         }
     } else {
-         for (plane=0; plane<3; ++plane) 
+        for (plane=0; plane<3; ++plane)
             for (job=0; job<nb_jobs; ++job)
                 s->white[plane] = FFMAX(s->white[plane] , td.data[INDEX_DST][plane][job]);
     }
-    
+
     cleanup_derivative_buffers(ctx, &td);
     return 0;
 }
@@ -515,7 +506,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
         av_freep(&out);
         return ret;
     }
- 
+
     chromatic_adaptation(ctx, in, out);
 
     return ff_filter_frame(outlink, out);
@@ -526,7 +517,7 @@ static av_cold void uninit(AVFilterContext *ctx)
     ColorConstancyContext *s = ctx->priv;
     int i;
 
-    for (i = 0; i <= MAX_DIFF_ORD; ++i) 
+    for (i = 0; i <= MAX_DIFF_ORD; ++i)
         av_freep(&s->gauss[i]);
 }
 
