@@ -6067,6 +6067,37 @@ colorbalance=rs=.3
 @end example
 @end itemize
 
+@section colordog
+A color constancy variation voting filter which estimates scene illumination by using previously
+estimated illuminations to vote for an illumination from a set of possible illuminations.
+
+See: @url{https://ipg.fer.hr/_download/repository/Color_Dog_-_Guiding_the_Global_Illumination_Estimation_to_Better_Accuracy.pdf}
+
+The filter accepts the following options:
+
+@table @option
+@item illumfile
+The file with the set of possible illuminations to pick the scene illumination from. Default value is
+NULL and a file must be chosen.
+
+@item estimfile
+The file with the previously estimated illuminations to use as voters. Default value is NULL and
+a file must be chosen.
+
+@item correct
+Whether to correct the illumination of given image or just estimate illumination without correcting.
+Must be chosen in the range [0,1] and default value is 1.
+
+@item save
+Whether to save the estimated illumination of given image to a given file or not. Must be chosen in
+the range [0,1] and default value is 0.
+
+@item outfile
+The binary file used for saving the estimated illumination when @var{save} = 1. The newly estimated
+illumination is appended to end of file. Default value is NULL and produces only warning when a file
+is not chosen and @var{save} = 1.
+@end table
+
 @section colorkey
 RGB colorspace color keying.
 
@@ -9962,6 +9993,19 @@ max value instead of calculating Minkowski distance.
 The standard deviation of Gaussian blur to be applied on the scene. Must be
 chosen in the range [0,1024.0] and default value = 1. Sigma can't be set to 0
 if @var{difford} is greater than 0.
+
+@item correct
+Whether to correct the illumination of given image or just estimate illumination without correcting.
+Must be chosen in the range [0,1] and default value is 1.
+
+@item save
+Whether to save the estimated illumination of given image to a given file or not. Must be chosen in
+the range [0,1] and default value is 0.
+
+@item outfile
+The binary file used for saving the estimated illumination when @var{save} = 1. The newly estimated
+illumination is appended to end of file. Default value is NULL and produces only warning when a file
+is not chosen and @var{save} = 1.
 @end table
 
 @subsection Examples

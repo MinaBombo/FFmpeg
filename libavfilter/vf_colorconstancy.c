@@ -26,9 +26,12 @@
  *
  * @cite
  * J. van de Weijer, Th. Gevers, A. Gijsenij "Edge-Based Color Constancy".
+ *
+ * @cite
+ * Nikola Banic´ and Sven Loncaric´
+ * "Color Dog: Guiding the Global Illumination Estimation to Better Accuracy"
  */
 
-#include "libavutil/bprint.h"
 #include "libavutil/imgutils.h"
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
@@ -39,8 +42,10 @@
 #include "video.h"
 
 #include <math.h>
+#include <stdio.h>
 
 #define GREY_EDGE "greyedge"
+#define COLOR_DOG "colordog"
 
 #define NUM_PLANES    3
 #define MAX_DIFF_ORD  2
@@ -73,18 +78,30 @@ typedef struct ThreadData {
  */
 typedef struct ColorConstancyContext {
     const AVClass *class;
-
+    /** Common options */
+    int correct;
+    int save;
+    const char *outfile;
+    /** Grey Edge options */
     int difford;
     int minknorm; /**< @minknorm = 0 : getMax instead */
     double sigma;
+    /** Color Dog options */
+    const char *illumfile;
+    const char *estimfile;
 
+    /** Common props */
     int nb_threads;
     int planeheight[4];
     int planewidth[4];
-
+    /** Grey Edge props*/
     int filtersize;
     double *gauss[MAX_DIFF_ORD+1];
+    /** Color Dog props */
+    int nb_illums;
+    double *illums[NUM_PLANES];
 
+    /** Common results */
     double white[NUM_PLANES];
 } ColorConstancyContext;
 
@@ -526,6 +543,154 @@ static int filter_grey_edge(AVFilterContext *ctx, AVFrame *in)
     return 0;
 }
 
+#define get_filesize(f, s) do { \
+    fseek( (f), 0, SEEK_END ); \
+    (s) = ftell( (f) ); \
+    fseek( (f), 0, SEEK_SET ); \
+} while (0)
+
+/**
+ * Fills possible illuminations read from file. Illuminations are
+ * assumed to be stored in a binary file of doubles. Will return
+ * error if not even one full illumination can be read.
+ *
+ * @param ctx the filter context.
+ *
+ * @return 0 in case of success, a negative value corresponding to an
+ * AVERROR code in case of failure.
+ */
+static int read_possible_illums(AVFilterContext* ctx) {
+    ColorConstancyContext *s = ctx->priv;
+    const char *url = s->illumfile;
+    FILE *file;
+    long filesize;
+    int i, p;
+
+    if (!url) {
+        av_log( ctx, AV_LOG_ERROR, "No url for possible illuminations file given.\n");
+        return AVERROR(EINVAL);
+    } else {
+        file = fopen(url, "rb");
+        if (!file) {
+            av_log( ctx, AV_LOG_ERROR, "Can't open possible illuminations file: %s.\n", url );
+            return AVERROR(ENOENT);
+        }
+
+        get_filesize(file, filesize);
+        s->nb_illums = ( filesize / sizeof(double) ) / NUM_PLANES;
+        p            = ( filesize / sizeof(double) ) % NUM_PLANES;
+        av_log( ctx, AV_LOG_DEBUG, "Number of complete possible illuminations = %d.\n", s->nb_illums);
+        if (!s->nb_illums) {
+            av_log( ctx, AV_LOG_ERROR, "Can't read any complete possible illuminations.\n");
+            fclose(file);
+            return AVERROR(EINVAL);
+        } else if (p) {
+            av_log(ctx, AV_LOG_WARNING, "Last possible illumination is ignored (missing %d planes).\n",
+                   NUM_PLANES - p );
+        }
+
+        for (p = 0; p < NUM_PLANES; ++p) {
+            s->illums[p] = av_malloc_array( s->nb_illums, sizeof(*s->illums[p]) );
+            if (!s->illums[p]) {
+                av_log( ctx, AV_LOG_ERROR, "Out of memory while allocating possible illuminations buffer.\n");
+                fclose(file);
+                return AVERROR(ENOMEM);
+            }
+        }
+
+        for (i = 0; i < s->nb_illums; ++i) {
+            for (p = 0; p < NUM_PLANES; ++p) {
+                fread(&s->illums[p][i], sizeof(s->illums[p][i]), 1, file);
+            }
+        }
+    }
+
+    fclose(file);
+    return 0;
+}
+
+/**
+ * Calculates the scene illumination out of all possible illuminations
+ * based on previous estimated illuminations through voting where
+ * vote[i] = sum( cos( angle(i, e) ) ). And
+ * cos( angle(i, e) ) = dotproduct(i, e) / (mag(i) * mag(e))
+ * Estimated illuminations are read form file and calculated one by
+ * one.
+ *
+ * @param ctx an AVFilterContext holding the filter context
+ *
+ * @return 0 in case of success, a negative value corresponding to an
+ * AVERROR code in case of failure.
+ */
+static int filter_color_dog(AVFilterContext* ctx)
+{
+    ColorConstancyContext *s = ctx->priv;
+    int nb_illums            = s->nb_illums;
+    const char *url          = s->estimfile;
+    FILE *file;
+    long filesize;
+    double estim, magi, mage, dprod;
+    double currvote, maxvote = -INFINITY;
+    int nb_estim, maxvote_index;
+    int i, e, p;
+
+    if (!url) {
+        av_log( ctx, AV_LOG_ERROR, "No url for estimated illuminations file given.\n");
+        return AVERROR(EINVAL);
+    }
+
+    file = fopen(url, "rb");
+    if (!file) {
+        av_log( ctx, AV_LOG_ERROR, "%s: Can't open file.\n", url );
+        return AVERROR(ENOENT);
+    }
+    get_filesize(file, filesize);
+    nb_estim = ( filesize / sizeof(double) ) / NUM_PLANES;
+    p        = ( filesize / sizeof(double) ) % NUM_PLANES;
+    av_log( ctx, AV_LOG_DEBUG, "Number of complete estimated illuminations = %d.\n", nb_estim);
+    if (!nb_estim) {
+        av_log( ctx, AV_LOG_ERROR, "Can't read any complete estimated illuminations.\n");
+        fclose(file);
+        return AVERROR(EINVAL);
+    } else if (p) {
+        av_log(ctx, AV_LOG_WARNING, "Last illumination is ignored (missing %d planes).\n",
+               NUM_PLANES - p );
+    }
+
+    for (i = 0; i < nb_illums; ++i) {
+        magi = 0;
+        currvote = 0;
+        for ( p = 0; p < NUM_PLANES; ++p) {
+            // Calculate magnitude of current illumination
+            magi += ( s->illums[p][i]  * s->illums[p][i] );
+        }
+        magi = sqrt(magi);
+        for (e = 0; e < nb_estim; ++e) {
+            mage = 0;
+            for ( p = 0; p < NUM_PLANES; ++p) {
+                // Calculate magnitude of current estimation
+                // and also the dot product
+                fread(&estim, sizeof(estim), 1, file);
+                mage  += ( estim * estim );
+                dprod += ( s->illums[p][i] * estim );
+            }
+            mage = sqrt(mage);
+            currvote += (dprod / (magi * mage) ); // ie vote = sum of cos(angle between illum and estim)
+        }
+        if (currvote > maxvote) {
+            maxvote = currvote;
+            maxvote_index = i;
+        }
+    }
+
+    for ( p = 0; p < NUM_PLANES; ++p) {
+        s->white[p] = s->illums[p][maxvote_index];
+    }
+
+    fclose(file);
+    return 0;
+}
+
 /**
  * Normalizes estimated illumination since only illumination vector
  * direction is required for color constancy.
@@ -568,7 +733,11 @@ static int illumination_estimation(AVFilterContext *ctx, AVFrame *in)
     ColorConstancyContext *s = ctx->priv;
     int ret;
 
-    ret = filter_grey_edge(ctx, in);
+    if ( !strcmp(ctx->filter->name, GREY_EDGE) ) {
+        ret = filter_grey_edge(ctx, in);
+    } else if ( !strcmp(ctx->filter->name, COLOR_DOG) ) {
+        ret = filter_color_dog(ctx);
+    }
 
     av_log(ctx, AV_LOG_DEBUG, "Estimated illumination= %f %f %f\n",
            s->white[0], s->white[1], s->white[2]);
@@ -636,6 +805,41 @@ static void chromatic_adaptation(AVFilterContext *ctx, AVFrame *in, AVFrame *out
     ctx->internal->execute(ctx, diagonal_transformation, &td, NULL, nb_jobs);
 }
 
+/**
+ * Saves estimated illumination to a file mainly for later usage
+ * in color dog. Illuminations will be stored as doubles each
+ * illumination after the other. Only warnings are triggered because
+ * this doesn't affect the final result, just saving it.
+ *
+ * @param ctx an AVFilterContext holding the filter context
+ *
+ * @return 0 in case of success, a negative value corresponding to an
+ * AVERROR code in case of failure.
+ */
+static int save_tofile(AVFilterContext *ctx)
+{
+    ColorConstancyContext *s = ctx->priv;
+    const char *url          = s->outfile;
+    const double *white      = s->white;
+    FILE *file;
+
+    if (!url) {
+        av_log( ctx, AV_LOG_ERROR, "Url of file for saving estimated illuminations is not given.\n");
+        return AVERROR(EINVAL);
+    } else {
+        file = fopen(url, "ab");
+        if (!file) {
+            /** A warning only because we are just saving final result */
+            av_log( ctx, AV_LOG_WARNING, "%s: Can't open file.\n", url );
+            return AVERROR(ENOENT);
+        }
+    }
+    fwrite(white, sizeof(*white), NUM_PLANES, file);
+
+    fclose(file);
+    return 0;
+}
+
 static int query_formats(AVFilterContext *ctx)
 {
     static const enum AVPixelFormat pix_fmts[] = {
@@ -653,18 +857,31 @@ static int config_props(AVFilterLink *inlink)
     AVFilterContext *ctx = inlink->dst;
     ColorConstancyContext *s = ctx->priv;
     const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(inlink->format);
-    const double break_off_sigma = 3.0;
-    double sigma = s->sigma;
     int ret;
 
-    if (!sigma && s->difford) {
-        av_log(ctx, AV_LOG_ERROR, "Sigma can't be set to 0 when difford > 0.\n");
-        return AVERROR(EINVAL);
-    }
+    if ( !strcmp(ctx->filter->name, GREY_EDGE) ) {
+        const double break_off_sigma = 3.0;
+        double sigma = s->sigma;
 
-    s->filtersize = 2 * floor(break_off_sigma * s->sigma + 0.5) + 1;
-    if (ret=set_gauss(ctx)) {
-        return ret;
+        if (!sigma && s->difford) {
+            av_log(ctx, AV_LOG_ERROR, "Sigma can't be set to 0 when difford > 0.\n");
+            return AVERROR(EINVAL);
+        }
+
+        s->filtersize = 2 * floor(break_off_sigma * s->sigma + 0.5) + 1;
+        if (ret=set_gauss(ctx)) {
+            return ret;
+        }
+    } else if ( !strcmp(ctx->filter->name, COLOR_DOG) ) {
+        if (!s->estimfile) {
+            av_log(ctx, AV_LOG_ERROR, "No file given for estimated illuminations.\n");
+            return AVERROR(EINVAL);
+        }
+
+        ret  = read_possible_illums(ctx);
+        if (ret) {
+            return ret;
+        }
     }
 
     s->nb_threads = ff_filter_get_nb_threads(ctx);
@@ -678,8 +895,9 @@ static int config_props(AVFilterLink *inlink)
 
 static int filter_frame(AVFilterLink *inlink, AVFrame *in)
 {
-    AVFilterContext *ctx = inlink->dst;
-    AVFilterLink *outlink = ctx->outputs[0];
+    AVFilterContext *ctx     = inlink->dst;
+    ColorConstancyContext *s = ctx->priv;
+    AVFilterLink *outlink    = ctx->outputs[0];
     AVFrame *out;
     int ret;
 
@@ -698,7 +916,14 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
         }
         av_frame_copy_props(out, in);
     }
-    chromatic_adaptation(ctx, in, out);
+
+    if (s->correct) {
+        chromatic_adaptation(ctx, in, out);
+    }
+
+    if (s->save) {
+        save_tofile(ctx);
+    }
 
     return ff_filter_frame(outlink, out);
 }
@@ -709,8 +934,12 @@ static av_cold void uninit(AVFilterContext *ctx)
     int difford = s->difford;
     int i;
 
-    for (i = 0; i <= difford; ++i) {
-        av_freep(&s->gauss[i]);
+    if ( !strcmp(ctx->filter->name, GREY_EDGE) ) {
+        for (i = 0; i <= difford; ++i) {
+            av_freep(&s->gauss[i]);
+        }
+    } else if ( !strcmp(ctx->filter->name, COLOR_DOG) ) {
+        av_freep(&s->illums);
     }
 }
 
@@ -738,6 +967,11 @@ static const AVOption greyedge_options[] = {
     { "difford",  "set differentiation order", OFFSET(difford),  AV_OPT_TYPE_INT,    {.i64=1},   0,   2,      FLAGS },
     { "minknorm", "set Minkowski norm",        OFFSET(minknorm), AV_OPT_TYPE_INT,    {.i64=1},   0,   65535,  FLAGS },
     { "sigma",    "set sigma",                 OFFSET(sigma),    AV_OPT_TYPE_DOUBLE, {.dbl=1},   0.0, 1024.0, FLAGS },
+
+    { "correct", "correct scene illumination",  OFFSET(correct), AV_OPT_TYPE_BOOL,   {.i64=1}, 0, 1, FLAGS },
+    { "save",    "save estimated illumination", OFFSET(save),    AV_OPT_TYPE_BOOL,   {.i64=0}, 0, 1, FLAGS },
+    { "outfile", "file for saving",             OFFSET(outfile), AV_OPT_TYPE_STRING, {.str=NULL},    FLAGS },
+
     { NULL }
 };
 
@@ -756,3 +990,32 @@ AVFilter ff_vf_greyedge = {
 };
 
 #endif /* CONFIG_GREY_EDGE_FILTER */
+
+#if CONFIG_COLORDOG_FILTER
+
+static const AVOption colordog_options[] = {
+    { "illumfile", "file containing possible illuminations",  OFFSET(illumfile), AV_OPT_TYPE_STRING, {.str=NULL}, FLAGS },
+    { "estimfile", "file containing estimated illuminations", OFFSET(estimfile), AV_OPT_TYPE_STRING, {.str=NULL}, FLAGS },
+
+    { "correct", "correct scene illumination",  OFFSET(correct), AV_OPT_TYPE_BOOL,   {.i64=1}, 0, 1, FLAGS },
+    { "save",    "save estimated illumination", OFFSET(save),    AV_OPT_TYPE_BOOL,   {.i64=0}, 0, 1, FLAGS },
+    { "outfile", "file for saving",             OFFSET(outfile), AV_OPT_TYPE_STRING, {.str=NULL},    FLAGS },
+
+    { NULL }
+};
+
+AVFILTER_DEFINE_CLASS(colordog);
+
+AVFilter ff_vf_colordog = {
+    .name          = COLOR_DOG,
+    .description   = NULL_IF_CONFIG_SMALL("Estimates scene illumination by color dog voting algorithm."),
+    .priv_size     = sizeof(ColorConstancyContext),
+    .priv_class    = &colordog_class,
+    .query_formats = query_formats,
+    .uninit        = uninit,
+    .inputs        = colorconstancy_inputs,
+    .outputs       = colorconstancy_outputs,
+    .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC | AVFILTER_FLAG_SLICE_THREADS,
+};
+
+#endif /* CONFIG_COLORDOG_FILTER */
