@@ -9955,13 +9955,13 @@ The order of differentiation to be applied on the scene. Must be chosen in the r
 
 @item minknorm
 The Minkowski parameter to be used for calculating the Minkowski distance. Must
-be chosen in the range [0,65535] and default value is 1. Set to 0 for getting
+be chosen in the range [0,20] and default value is 1. Set to 0 for getting
 max value instead of calculating Minkowski distance.
 
 @item sigma
 The standard deviation of Gaussian blur to be applied on the scene. Must be
-chosen in the range [0,1024.0] and default value = 1. Sigma can't be set to 0
-if @var{difford} is greater than 0.
+chosen in the range [0,1024.0] and default value = 1. floor( @var{sigma} * break_off_sigma(3) )
+can't be euqal to 0 if @var{difford} is greater than 0.
 @end table
 
 @subsection Examples
@@ -17142,6 +17142,45 @@ Set the frame as bottom-field-first.
 Interlace video using @ref{select} and @ref{separatefields} filter:
 @example
 separatefields,select=eq(mod(n,4),0)+eq(mod(n,4),3),weave
+@end example
+@end itemize
+
+@section weighted_greyedge
+A color constancy variation filter which estimates scene illumination via weighted grey edge
+algorithm and corrects the scene colors accordingly.
+
+See: @url{http://refbase.cvc.uab.es/files/GGW2012.pdf}
+
+The filter accepts the following options:
+
+@table @option
+@item minknorm
+The Minkowski parameter to be used for calculating the Minkowski distance. Must
+be chosen in the range [1,20] and default value is 1.
+
+@item sigma
+The standard deviation of Gaussian blur to be applied on the scene. Must be
+chosen in the range [0.2,1024.0] and default value = 1.
+
+@item wmap_k
+The power applied to the weight map to emphasis heigher weights. Must be chosen
+in the range [1,20] and default value = 2.
+
+@item iters
+The max number of iterations for performing the algorithm. Must be chosen in the
+range [1,20] and default value = 5.
+
+@item angerr
+The angular error threshold in degrees for stoping the algorithm. Must be chosen
+in the range [0,360] and default value = 0.001.
+@end table
+
+@subsection Examples
+@itemize
+
+@item
+@example
+weighted_greyedge=minknorm=5:sigma=2:wmap_k=10:iters=10:angerr=0.0005
 @end example
 @end itemize
 
